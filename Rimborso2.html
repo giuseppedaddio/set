@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rimborso Spese - Salvataggio Locale</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.25/jspdf.plugin.autotable.min.js"></script>
+</head>
+<body class="bg-gray-100 p-4 md:p-8 font-sans">
+
+    <div class="max-w-4xl mx-auto" x-data="expenseApp()">
+        
+        <div class="flex justify-between items-center mb-4 bg-white p-3 rounded-xl shadow-sm border border-gray-200">
+            <div class="flex gap-2">
+                <button @click="exportData()" class="text-xs bg-gray-800 text-white px-3 py-2 rounded-lg hover:bg-gray-700 flex items-center gap-1">
+                    💾 Salva File sul PC
+                </button>
+                <label class="text-xs bg-white border border-gray-300 text-gray-700 px-3 py-2 rounded-lg hover:bg-gray-50 cursor-pointer flex items-center gap-1">
+                    📂 Carica File
+                    <input type="file" class="hidden" @change="importData($event)">
+                </label>
+            </div>
+            <button @click="resetData()" class="text-xs text-red-600 font-bold px-3 py-2">Svuota Modulo</button>
+        </div>
+
+        <div class="bg-white shadow-2xl rounded-3xl overflow-hidden border border-gray-200">
+            <div class="bg-slate-800 p-6 text-white">
+                <h1 class="text-2xl font-bold uppercase">Rimborso Spese</h1>
+                <p class="text-slate-400 text-xs uppercase tracking-widest mt-1">Gestione file locale off-browser</p>
+            </div>
+
+            <div class="p-6 space-y-8">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <label class="block text-[10px] font-black text-gray-400 uppercase mb-1">Nome Dipendente</label>
+                        <input type="text" x-model="user.name" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-500">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-black text-gray-400 uppercase mb-1">Mese/Anno</label>
+                        <input type="month" x-model="user.period" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-500">
+                    </div>
+                </div>
+
+                <section>
+                    <h2 class="text-sm font-black text-gray-800 mb-4 border-l-4 border-slate-800 pl-3">SPESE DOCUMENTATE</h2>
+                    <div class="overflow-x-auto border border-gray-100 rounded-2xl">
+                        <table class="w-full text-sm">
+                            <thead class="bg-gray-50 text-gray-500 uppercase text-[10px]">
+                                <tr>
+                                    <th class="p-4">Data</th>
+                                    <th class="p-4">Categoria</th>
+                                    <th class="p-4">Descrizione</th>
+                                    <th class="p-4 text-right">Importo (€)</th>
+                                    <th class="p-4 w-10"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template x-for="(expense, index) in expenses" :key="index">
+                                    <tr class="border-t border-gray-50">
+                                        <td class="p-2"><input type="date" x-model="expense.date" class="w-full bg-transparent border-none"></td>
+                                        <td class="p-2">
+                                            <select x-model="expense.category" class="w-full bg-transparent border-none">
+                                                <option>Pasti</option><option>Viaggio</option><option>Alloggio</option><option>Altro</option>
+                                            </select>
+                                        </td>
+                                        <td class="p-2"><input type="text" x-model="expense.desc" class="w-full bg-transparent border-none" placeholder="..."></td>
+                                        <td class="p-2"><input type="number" step="0.01" x-model.number="expense.amount" class="w-full bg-transparent border-none text-right font-bold"></td>
+                                        <td class="p-2 text-center"><button @click="removeRow('expenses', index)" class="text-gray-300 hover:text-red-500">&times;</button></td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                    <button @click="addRow('expenses')" class="mt-3 text-xs font-bold text-slate-600">+ AGGIUNGI RIGA</button>
+                </section>
+
+                <section>
+                    <h2 class="text-sm font-black text-gray-800 mb-4 border-l-4 border-blue-600 pl-3 uppercase">Rimborso KM (0,43 €/km)</h2>
+                    <div class="overflow-x-auto border border-blue-50 bg-blue-50/20 rounded-2xl">
+                        <table class="w-full text-sm">
+                            <thead class="text-blue-600 uppercase text-[10px] font-bold">
+                                <tr>
+                                    <th class="p-4 text-left">Data</th>
+                                    <th class="p-4 text-left">Itinerario</th>
+                                    <th class="p-4 text-right">KM</th>
+                                    <th class="p-4 text-right">Totale</th>
+                                    <th class="p-4 w-10"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template x-for="(item, index) in mileage" :key="index">
+                                    <tr class="border-t border-blue-50">
+                                        <td class="p-2"><input type="date" x-model="item.date" class="w-full bg-transparent border-none"></td>
+                                        <td class="p-2"><input type="text" x-model="item.route" class="w-full bg-transparent border-none" placeholder="A -> B"></td>
+                                        <td class="p-2"><input type="number" x-model.number="item.km" class="w-full bg-transparent border-none text-right font-bold"></td>
+                                        <td class="p-2 text-right font-bold text-blue-700" x-text="formatCurrency(item.km * 0.43)"></td>
+                                        <td class="p-2 text-center text-blue-200"><button @click="removeRow('mileage', index)">&times;</button></td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                    <button @click="addRow('mileage')" class="mt-3 text-xs font-bold text-blue-600">+ AGGIUNGI VIAGGIO</button>
+                </section>
+
+                <div class="bg-slate-900 rounded-3xl p-8 text-white flex flex-col md:flex-row justify-between items-center gap-6">
+                    <div class="text-center md:text-left">
+                        <p class="text-slate-400 text-[10px] uppercase font-bold tracking-widest">Totale Rimborso</p>
+                        <p class="text-5xl font-black" x-text="formatCurrency(calculateTotal())"></p>
+                    </div>
+                    <button @click="generatePDFAndEmail()" class="w-full md:w-auto bg-white text-slate-900 px-10 py-4 rounded-2xl font-black hover:bg-blue-400 hover:text-white transition-all shadow-xl">
+                        GENERA PDF & INVIA
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function expenseApp() {
+            return {
+                user: { name: '', period: '' },
+                expenses: [{ date: '', category: 'Pasti', desc: '', amount: 0 }],
+                mileage: [{ date: '', route: '', km: 0 }],
+
+                addRow(type) {
+                    if(type === 'expenses') this.expenses.push({ date: '', category: 'Pasti', desc: '', amount: 0 });
+                    else this.mileage.push({ date: '', route: '', km: 0 });
+                },
+                removeRow(type, index) {
+                    if(this[type].length > 1) this[type].splice(index, 1);
+                },
+                calculateTotal() {
+                    const eTotal = this.expenses.reduce((s, i) => s + (Number(i.amount) || 0), 0);
+                    const mTotal = this.mileage.reduce((s, i) => s + ((Number(i.km) || 0) * 0.43), 0);
+                    return eTotal + mTotal;
+                },
+                formatCurrency(v) {
+                    return new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(v);
+                },
+
+                // --- NUOVE FUNZIONI DI SALVATAGGIO SU DISPOSITIVO ---
+                exportData() {
+                    const dataObj = {
+                        user: this.user,
+                        expenses: this.expenses,
+                        mileage: this.mileage
+                    };
+                    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(dataObj));
+                    const downloadAnchorNode = document.createElement('a');
+                    downloadAnchorNode.setAttribute("href", dataStr);
+                    downloadAnchorNode.setAttribute("download", `Dati_Rimborso_${this.user.name || 'Export'}.json`);
+                    document.body.appendChild(downloadAnchorNode);
+                    downloadAnchorNode.click();
+                    downloadAnchorNode.remove();
+                },
+
+                importData(event) {
+                    const file = event.target.files[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        try {
+                            const imported = JSON.parse(e.target.result);
+                            this.user = imported.user;
+                            this.expenses = imported.expenses;
+                            this.mileage = imported.mileage;
+                        } catch (err) {
+                            alert("Errore nel caricamento del file!");
+                        }
+                    };
+                    reader.readAsText(file);
+                },
+
+                resetData() {
+                    if(confirm("Vuoi svuotare il modulo? Assicurati di aver salvato il file sul PC se ti serve ancora.")) {
+                        this.user = { name: '', period: '' };
+                        this.expenses = [{ date: '', category: 'Pasti', desc: '', amount: 0 }];
+                        this.mileage = [{ date: '', route: '', km: 0 }];
+                    }
+                },
+
+                async generatePDFAndEmail() {
+                    const { jsPDF } = window.jspdf;
+                    const doc = new jsPDF();
+                    
+                    doc.setFontSize(20);
+                    doc.text("NOTA RIMBORSO SPESE", 14, 20);
+                    doc.setFontSize(10);
+                    doc.text(`Dipendente: ${this.user.name}`, 14, 30);
+                    doc.text(`Periodo: ${this.user.period}`, 14, 35);
+
+                    doc.autoTable({
+                        startY: 45,
+                        head: [['Data', 'Categoria', 'Descrizione', 'Importo (€)']],
+                        body: this.expenses.map(e => [e.date, e.category, e.desc, e.amount.toFixed(2)]),
+                        headStyles: { fillColor: [30, 41, 59] }
+                    });
+
+                    doc.autoTable({
+                        startY: doc.lastAutoTable.finalY + 10,
+                        head: [['Data', 'Itinerario', 'KM', 'Rimborso (€)']],
+                        body: this.mileage.map(m => [m.date, m.route, m.km, (m.km * 0.43).toFixed(2)]),
+                        headStyles: { fillColor: [37, 99, 235] }
+                    });
+
+                    const finalY = doc.lastAutoTable.finalY + 20;
+                    doc.setFontSize(12);
+                    doc.text(`TOTALE GENERALE: ${this.formatCurrency(this.calculateTotal())}`, 14, finalY);
+                    
+                    // Sezione Firma
+                    doc.line(14, finalY + 20, 80, finalY + 20);
+                    doc.text("Firma Dipendente", 14, finalY + 25);
+
+                    doc.save(`Rimborso_${this.user.name}.pdf`);
+
+                    window.location.href = `mailto:amministrazione@azienda.it?subject=Rimborso%20Spese&body=In%20allegato%20il%20mio%20modulo.`;
+                }
+            }
+        }
+    </script>
+</body>
+</html>
