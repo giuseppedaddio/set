@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>EasyRimborso Mobile</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.25/jspdf.plugin.autotable.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/signature_pad@4.0.0/dist/signature_pad.umd.min.js"></script>
+    <style>
+        [x-cloak] { display: none !important; }
+        input[type="date"], input[type="month"] { min-height: 44px; }
+        canvas { touch-action: none; }
+    </style>
+</head>
+<body class="bg-slate-50 font-sans text-slate-900 pb-32">
+
+    <div class="max-w-md mx-auto" x-data="expenseApp()" x-init="init()">
+        
+        <div class="bg-indigo-700 text-white p-6 rounded-b-3xl shadow-lg mb-6">
+            <h1 class="text-xl font-bold">I miei Rimborsi</h1>
+            <div class="mt-4 flex gap-2">
+                <button @click="openFile()" class="flex-1 bg-white/20 hover:bg-white/30 py-2 rounded-xl text-xs font-bold transition">📂 APRI</button>
+                <button @click="saveToFile()" class="flex-1 bg-indigo-500 hover:bg-indigo-400 py-2 rounded-xl text-xs font-bold transition">💾 SALVA</button>
+            </div>
+            <template x-if="fileHandle">
+                <p class="text-[10px] mt-2 text-indigo-200">File: <span x-text="fileHandle.name"></span></p>
+            </template>
+        </div>
+
+        <div class="px-2 space-y-8">
+            <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+                <input type="text" x-model="user.name" placeholder="Nome e Cognome" class="w-full border-none text-lg font-bold placeholder:text-slate-300 focus:ring-0">
+                <input type="month" x-model="user.period" @change="checkMonthChange()" class="w-full border-none text-slate-500 focus:ring-0 italic">
+            </div>
+
+            <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+                <h2 class="font-black uppercase text-[10px] tracking-widest text-slate-400 mb-2">Tua Firma</h2>
+                <div class="border-2 border-dashed border-slate-200 rounded-xl bg-slate-50 overflow-hidden">
+                    <canvas id="signature-pad" class="w-full h-32"></canvas>
+                </div>
+                <button @click="clearSignature()" class="mt-2 text-[10px] font-bold text-red-500 uppercase">Cancella Firma</button>
+            </div>
+
+            <div>
+                <div class="flex justify-between items-center mb-4 px-2">
+                    <h2 class="font-black uppercase text-[15px] tracking-widest text-slate-400">Spese e Ricevute</h2>
+                    <button @click="addRow('expenses')" class="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-xs font-bold">+ AGGIUNGI</button>
+                </div>
+
+                <div class="space-y-4">
+                    <template x-for="(expense, index) in expenses" :key="index">
+                        <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 relative">
+                            <button @click="removeRow('expenses', index)" class="absolute top-2 right-2 text-slate-300 p-2">&times;</button>
+                            <div class="flex gap-4">
+                                <label class="shrink-0">
+                                    <input type="file" accept="image/*" capture="environment" @change="handleImage($event, index)" class="hidden">
+                                    <div :class="expense.image ? 'border-indigo-500' : 'border-slate-200'" class="w-20 h-24 border-2 border-dashed rounded-xl flex flex-col items-center justify-center overflow-hidden">
+                                        <template x-if="!expense.image">
+                                            <div class="text-center">
+                                                <span class="text-xl">📸</span>
+                                                <span class="block text-[8px] font-bold text-slate-400 uppercase mt-1">Foto</span>
+                                            </div>
+                                        </template>
+                                        <template x-if="expense.image">
+                                            <img :src="expense.image" class="w-full h-full object-cover">
+                                        </template>
+                                    </div>
+                                </label>
+                                <div class="flex-1 space-y-2">
+                                    <input type="date" x-model="expense.date" class="w-full p-0 border-none text-sm font-bold focus:ring-0">
+                                    <input type="text" x-model="expense.desc" placeholder="Cosa hai pagato?" class="w-full p-0 border-none text-sm text-black placeholder-black font-semibold focus:ring-0">
+                                    <div class="flex items-center">
+                                        <span class="text-slate-400 font-bold mr-1">€</span>
+                                        <input type="number" step="0.01" x-model.number="expense.amount" class="w-full p-0 border-none text-lg font-black focus:ring-0" placeholder="0.00">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <div>
+                <div class="flex justify-between items-center mb-4 px-2">
+                    <h2 class="font-black uppercase text-[10px] tracking-widest text-slate-400">Chilometri (0,43€/km)</h2>
+                    <button @click="addRow('mileage')" class="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-bold">+ TRAGITTO</button>
+                </div>
+                <div class="space-y-3">
+                    <template x-for="(item, index) in mileage" :key="index">
+                        <div class="bg-blue-50/50 p-4 rounded-2xl border border-blue-100 flex items-center gap-3">
+                            <div class="flex-1">
+                                <input type="text" x-model="item.route" placeholder="TRAGITTO" class="w-full bg-transparent border-none p-0 text-sm font-bold text-black placeholder-black focus:ring-0">
+                                <input type="date" x-model="item.date" class="w-full bg-transparent border-none p-0 text-[15px] text-blue-500 focus:ring-0">
+                            </div>
+                            <div class="text-right">
+                                <input type="number" x-model.number="item.km" class="w-16 bg-transparent border-none p-0 text-right font-black text-blue-700 focus:ring-0" placeholder="KM">
+                                <p class="text-[10px] font-bold text-blue-400" x-text="formatCurrency(item.km * 0.43)"></p>
+                            </div>
+                            <button @click="removeRow('mileage', index)" class="text-blue-200 pl-2">&times;</button>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+
+        <div class="fixed bottom-0 left-0 right-0 p-4 bg-white/80 backdrop-blur-md border-t border-slate-200 max-w-md mx-auto flex items-center justify-between shadow-lg">
+            <div>
+                <p class="text-[10px] font-black text-slate-400 uppercase leading-none">Totale</p>
+                <p class="text-2xl font-black text-indigo-700" x-text="formatCurrency(calculateTotal())"></p>
+            </div>
+            <button @click="generatePDF()" class="bg-indigo-700 text-white px-6 py-3 rounded-2xl font-bold shadow-lg active:scale-95 transition uppercase text-sm">
+                PDF & EMAIL
+            </button>
+        </div>
+    </div>
+
+    <script>
+        function expenseApp() {
+            let signaturePad;
+            return {
+                user: { name: '', period: '' },
+                expenses: [{ date: new Date().toISOString().split('T')[0], desc: '', amount: 0, image: null }],
+                mileage: [{ date: new Date().toISOString().split('T')[0], route: '', km: 0 }],
+                fileHandle: null,
+                lastLoadedMonth: null,
+
+                init() {
+                    const canvas = document.getElementById('signature-pad');
+                    signaturePad = new SignaturePad(canvas);
+                    
+                    // Adattamento canvas al contenitore
+                    const resizeCanvas = () => {
+                        const ratio = Math.max(window.devicePixelRatio || 1, 1);
+                        canvas.width = canvas.offsetWidth * ratio;
+                        canvas.height = canvas.offsetHeight * ratio;
+                        canvas.getContext("2d").scale(ratio, ratio);
+                        signaturePad.clear();
+                    };
+                    window.onresize = resizeCanvas;
+                    resizeCanvas();
+                },
+
+                clearSignature() { signaturePad.clear(); },
+
+                checkMonthChange() {
+                    if (this.lastLoadedMonth && this.user.period !== this.lastLoadedMonth) {
+                        if (confirm("Mese cambiato. Vuoi resettare tutti i campi e creare un nuovo file?")) {
+                            this.expenses = [{ date: this.user.period + '-01', desc: '', amount: 0, image: null }];
+                            this.mileage = [{ date: this.user.period + '-01', route: '', km: 0 }];
+                            this.clearSignature();
+                            this.fileHandle = null; // Scollega il file vecchio
+                            alert("Campi resettati. Seleziona 'Salva' per creare il nuovo file.");
+                        }
+                    }
+                    this.lastLoadedMonth = this.user.period;
+                },
+
+                async handleImage(event, index) {
+                    const file = event.target.files[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = (e) => this.expenses[index].image = e.target.result;
+                    reader.readAsDataURL(file);
+                },
+
+                async openFile() {
+                    try {
+                        const [handle] = await window.showOpenFilePicker();
+                        this.fileHandle = handle;
+                        const file = await handle.getFile();
+                        const data = JSON.parse(await file.text());
+                        this.user = data.user; 
+                        this.expenses = data.expenses; 
+                        this.mileage = data.mileage;
+                        this.lastLoadedMonth = this.user.period;
+                    } catch (e) {}
+                },
+
+                async saveToFile() {
+                    const data = JSON.stringify({ user: this.user, expenses: this.expenses, mileage: this.mileage }, null, 2);
+                    try {
+                        if (!this.fileHandle) {
+                            this.fileHandle = await window.showSaveFilePicker({ suggestedName: `Rimborso_${this.user.period}.json` });
+                        }
+                        const writable = await this.fileHandle.createWritable();
+                        await writable.write(data);
+                        await writable.close();
+                        alert("Sincronizzato!");
+                    } catch (e) {
+                        // Fallback download standard se API non supportata
+                        const blob = new Blob([data], { type: 'application/json' });
+                        const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+                        a.download = `Rimborso_${this.user.period}.json`; a.click();
+                    }
+                },
+
+                addRow(type) {
+                    const date = this.user.period ? this.user.period + "-01" : new Date().toISOString().split('T')[0];
+                    if(type === 'expenses') this.expenses.unshift({ date: date, desc: '', amount: 0, image: null });
+                    else this.mileage.unshift({ date: date, route: '', km: 0 });
+                },
+
+                removeRow(type, index) {
+                    if(this[type].length > 1) this[type].splice(index, 1);
+                },
+
+                calculateTotal() {
+                    const eT = this.expenses.reduce((s, i) => s + (Number(i.amount) || 0), 0);
+                    const mT = this.mileage.reduce((s, i) => s + ((Number(i.km) || 0) * 0.43), 0);
+                    return eT + mT;
+                },
+
+                formatCurrency(v) { return new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(v); },
+
+                async generatePDF() {
+                    const { jsPDF } = window.jspdf;
+                    const doc = new jsPDF();
+                    const today = new Date().toLocaleDateString('it-IT');
+
+                    doc.setFont("helvetica", "bold");
+                    doc.setFontSize(18);
+                    doc.text("RICHIESTA RIMBORSO SPESE", 105, 20, { align: "center" });
+
+                    doc.setFontSize(10);
+                    doc.setFont("helvetica", "normal");
+                    doc.text("Spett.le Amministrazione", 14, 35);
+                    
+                    doc.setDrawColor(200);
+                    doc.rect(14, 40, 182, 25); 
+                    doc.setFont("helvetica", "bold");
+                    doc.text(`Dipendente: ${this.user.name || '__________'}`, 20, 50);
+                    doc.text(`Periodo: ${this.user.period || '__________'}`, 20, 57);
+                    doc.setFont("helvetica", "normal");
+                    doc.text(`Data: ${today}`, 140, 50);
+
+                    let righe = [];
+                    this.expenses.forEach(e => { if(e.amount > 0) righe.push([e.date, e.desc, 'Spesa', `€ ${e.amount.toFixed(2)}`]); });
+                    this.mileage.forEach(m => { if(m.km > 0) righe.push([m.date, `${m.route} (${m.km}km)`, 'KM', `€ ${(m.km*0.43).toFixed(2)}`]); });
+                    righe.sort((a, b) => new Date(a[0]) - new Date(b[0]));
+
+                    doc.autoTable({
+                        startY: 75,
+                        head: [['DATA', 'DESCRIZIONE', 'TIPO', 'IMPORTO']],
+                        body: righe,
+                        theme: 'grid',
+                        headStyles: { fillColor: [40, 40, 40] },
+                        columnStyles: { 3: { halign: 'right' } }
+                    });
+
+                    const finalY = doc.lastAutoTable.finalY + 10;
+                    doc.setFont("helvetica", "bold");
+                    doc.text(`TOTALE: ${this.formatCurrency(this.calculateTotal())}`, 192, finalY, { align: "right" });
+
+                    // --- FIRMA ---
+                    const firmaY = finalY + 20;
+                    doc.setFontSize(9);
+                    doc.setFont("helvetica", "normal");
+                    doc.text("Firma del richiedente", 14, firmaY);
+                    
+                    if (!signaturePad.isEmpty()) {
+                        const firmaImg = signaturePad.toDataURL();
+                        doc.addImage(firmaImg, 'PNG', 14, firmaY + 2, 40, 15);
+                    }
+                    doc.line(14, firmaY + 17, 70, firmaY + 17);
+
+                    doc.text("Approvazione Responsabile", 130, firmaY);
+                    doc.line(130, firmaY + 17, 192, firmaY + 17);
+
+                    // --- FOTO ---
+                    this.expenses.forEach((e, i) => {
+                        if (e.image) {
+                            doc.addPage();
+                            doc.text(`ALLEGATO RICEVUTA - ${e.desc} (${e.date})`, 14, 20);
+                            doc.addImage(e.image, 'JPEG', 14, 30, 182, 0);
+                        }
+                    });
+
+                    doc.save(`Rimborso_${this.user.name}_${this.user.period}.pdf`);
+                    
+                    const subject = encodeURIComponent(`Rimborso Spese ${this.user.name} - ${this.user.period}`);
+                    const body = encodeURIComponent(`Totale richiesto: ${this.formatCurrency(this.calculateTotal())}`);
+                    window.location.href = `mailto:amministrazione@azienda.it?subject=${subject}&body=${body}`;
+                }
+            }
+        }
+    </script>
+</body>
+</html>
