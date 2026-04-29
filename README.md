@@ -8,3 +8,8 @@ UI Pulita: I pulsanti sono chiaramente distinti tra "Carica" (per riprendere il 
 
 Nota importante: Per usare la funzione di sovrascrittura dello stesso file, devi eseguire questa pagina web tramite un piccolo server locale o caricarla online 
 (GitHub Pages, Netlify, ecc.). Se apri il file .html direttamente col doppio clic dal desktop, il browser spesso blocca la scrittura dei file per sicurezza e userà il download classico.
+################################################################
+29/04/2026
+Ho integrato il Pad per la firma digitale, la logica di reset automatico al cambio mese con scollegamento del file, e ho rifinito il layout del PDF per includere la firma acquisita.
+
+Ho anche aggiunto la libreria signature_pad nell'head.
