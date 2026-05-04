@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rimborso Spese PDF + Excel - v52 Fix Sovrascrittura</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.25/jspdf.plugin.autotable.min.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.js"></script>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    </script>
+    
+    <style>
+        .cropper-container { width: 100% !important; }
+        .cropper-modal { background-color: rgba(15, 23, 42, 0.8); }
+    </style>
+</head>
+<body class="bg-slate-100 p-4 md:p-8 font-sans" x-data="expenseApp()" x-init="init()" :class="(activePreview || cropState.active) ? 'overflow-hidden' : ''">
+
+    <div x-show="cropState.active" x-transition.opacity class="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/95 backdrop-blur-sm" style="display: none;">
+        <div class="bg-white w-full max-w-4xl rounded-2xl overflow-hidden shadow-2xl flex flex-col">
+            <div class="p-4 bg-slate-800 text-white flex justify-between items-center">
+                <h3 class="font-black uppercase tracking-wider">Ritaglia Ricevuta</h3>
+                <button @click="cancelCrop()" class="text-slate-300 hover:text-white font-black text-xl">&times;</button>
+            </div>
+            
+            <div x-show="cropState.isPdf" class="bg-indigo-600 text-white px-4 py-2 flex justify-between items-center text-sm font-bold shadow-md z-10 relative">
+                <button @click="prevPdfPage()" :disabled="cropState.pageNum <= 1" class="px-3 py-1 bg-indigo-700 hover:bg-indigo-800 rounded disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center gap-1">
+                    &larr; Pag. Prec.
+                </button>
+                <span>Pagina <span x-text="cropState.pageNum"></span> di <span x-text="cropState.totalPages"></span></span>
+                <button @click="nextPdfPage()" :disabled="cropState.pageNum >= cropState.totalPages" class="px-3 py-1 bg-indigo-700 hover:bg-indigo-800 rounded disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center gap-1">
+                    Pag. Succ. &rarr;
+                </button>
+            </div>
+
+            <div class="bg-slate-900 p-2 w-full h-[60vh] flex items-center justify-center relative">
+                <div x-show="cropState.loading" class="absolute inset-0 flex items-center justify-center bg-slate-900/80 z-20">
+                    <span class="text-white font-black animate-pulse">Elaborazione file in corso...</span>
+                </div>
+                <img id="cropper-img" :src="cropState.src" class="max-w-full max-h-full block">
+            </div>
+            
+            <div class="p-4 bg-slate-50 flex gap-4 justify-end border-t border-slate-200">
+                <button @click="cancelCrop()" class="px-6 py-3 font-bold text-slate-500 hover:bg-slate-200 rounded-xl transition uppercase text-sm">Annulla</button>
+                <button @click="confirmCrop()" class="px-8 py-3 font-black text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl shadow-lg transition uppercase text-sm flex items-center gap-2">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                    Conferma e Ritaglia
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div x-show="activePreview !== null" x-transition.opacity class="fixed inset-0 z-[100] flex items-center justify-center p-2 md:p-6 bg-slate-900/95 backdrop-blur-sm" style="display: none;">
+        <template x-if="activePreview !== null">
+            <div class="w-full max-w-6xl h-full max-h-[90vh] bg-white rounded-2xl overflow-hidden shadow-2xl flex flex-col md:flex-row relative" @click.stop>
+                <button @click="closeZoomModal()" class="md:hidden absolute top-2 right-2 z-10 bg-red-500 text-white w-8 h-8 rounded-full font-black text-xl flex items-center justify-center shadow-lg">&times;</button>
+                <div class="flex-1 bg-slate-800 flex flex-col items-center justify-center p-4 relative min-h-[40vh]">
+                    <img :src="activePreview.exp.attachments[activePreview.aIndex].image" class="max-w-full max-h-full object-contain rounded drop-shadow-xl">
+                </div>
+                <div class="w-full md:w-96 bg-slate-50 flex flex-col border-l border-slate-200">
+                    <div class="p-6 bg-white border-b border-slate-200 shadow-sm z-10">
+                        <h3 class="text-lg font-black text-slate-800 uppercase">Inserisci Importi</h3>
+                        <p class="text-xs text-slate-500">Leggi dalla ricevuta e compila</p>
+                    </div>
+                    <div class="flex-1 overflow-y-auto p-6 space-y-4">
+                        <template x-for="(amt, amtIndex) in activePreview.exp.attachments[activePreview.aIndex].amounts" :key="amtIndex">
+                            <div class="flex items-center gap-2 group">
+                                <div class="relative flex-1">
+                                    <input type="number" step="0.01" x-model.number="activePreview.exp.attachments[activePreview.aIndex].amounts[amtIndex]" @input="saveToLocal()" @keydown.enter.prevent="addAmountToActive(); setTimeout(() => { const inputs = document.querySelectorAll('.preview-amt-input'); if(inputs.length) inputs[inputs.length - 1].focus(); }, 50)" class="w-full bg-white border-2 border-slate-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/20 rounded-xl p-3 text-right text-lg font-black text-indigo-900 placeholder:text-slate-300 transition preview-amt-input" placeholder="0.00" autofocus>
+                                    <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">€</span>
+                                </div>
+                                <button x-show="activePreview.exp.attachments[activePreview.aIndex].amounts.length > 1" @click="removeAmountFromActive(amtIndex)" class="bg-red-50 hover:bg-red-100 text-red-500 w-12 h-12 rounded-xl font-black text-xl flex items-center justify-center transition">&times;</button>
+                            </div>
+                        </template>
+                        <button @click="addAmountToActive(); setTimeout(() => { const inputs = document.querySelectorAll('.preview-amt-input'); if(inputs.length) inputs[inputs.length - 1].focus(); }, 50)" class="text-xs font-bold text-indigo-600 hover:text-indigo-800 uppercase flex items-center gap-1 py-2"><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>Aggiungi altra voce</button>
+                    </div>
+                    <div class="p-6 bg-white border-t border-slate-200 mt-auto">
+                        <div class="flex justify-between items-end mb-4">
+                            <span class="text-sm font-bold text-slate-500 uppercase">Totale:</span>
+                            <span class="text-3xl font-black text-slate-800" x-text="formatCurrency(getAttTotal(activePreview.exp.attachments[activePreview.aIndex]))"></span>
+                        </div>
+                        <button @click="closeZoomModal()" class="w-full bg-emerald-500 hover:bg-emerald-400 text-white font-black text-xl py-4 rounded-xl shadow-lg shadow-emerald-500/30 transition transform hover:-translate-y-1 uppercase tracking-widest">FINE</button>
+                    </div>
+                </div>
+            </div>
+        </template>
+    </div>
+
+    <div class="max-w-4xl mx-auto">
+        <div class="bg-slate-900 p-6 rounded-t-2xl text-white flex flex-col md:flex-row justify-between items-center gap-4 shadow-xl">
+            <div class="text-center md:text-left"><h1 class="text-2xl font-black uppercase tracking-tight text-white">Gestione Rimborsi Spese</h1></div>
+            <div class="flex flex-col md:flex-row items-center gap-3 w-full md:w-auto">
+                <div class="flex items-center gap-2 bg-slate-800 px-3 py-2 rounded-xl border border-slate-700 w-full md:w-auto justify-between shadow-inner">
+                    <label class="text-[10px] font-black text-blue-400 uppercase tracking-wider whitespace-nowrap">Tariffa KM</label>
+                    <input type="number" step="0.01" x-model.number="kmRate" @input="saveToLocal()" class="w-16 p-1.5 bg-slate-900 text-white font-black text-center rounded-lg border border-slate-600 focus:border-blue-500 outline-none transition" placeholder="0.41">
+                </div>
+                <label class="cursor-pointer bg-emerald-500/20 hover:bg-emerald-500 text-emerald-400 hover:text-white text-xs px-4 py-3 rounded-xl transition font-bold border border-emerald-500/30 uppercase flex items-center justify-center gap-2">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>Importa
+                    <input type="file" accept=".json" class="hidden" @change="importData($event)">
+                </label>
+                <button @click="resetData()" class="bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-white text-xs px-4 py-3 rounded-xl transition font-bold border border-red-500/30 uppercase flex items-center justify-center gap-2">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>Svuota Tutto
+                </button>
+            </div>
+        </div>
+
+        <div class="p-6 space-y-6 bg-white rounded-b-2xl shadow-xl">
+            <div class="bg-slate-50 p-6 rounded-2xl border border-slate-200 space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div><label class="block text-[10px] font-black text-slate-400 uppercase mb-2 tracking-wider">Dipendente</label><input type="text" x-model="user.name" @input="saveToLocal()" class="w-full p-3 bg-white border border-slate-200 rounded-xl font-bold text-slate-800"></div>
+                    <div><label class="block text-[10px] font-black text-slate-400 uppercase mb-2 tracking-wider">Mese</label><input type="month" x-model="user.period" @input="saveToLocal()" class="w-full p-3 bg-white border border-slate-200 rounded-xl font-bold text-slate-800"></div>
+                </div>
+                <div class="border-t border-slate-200 pt-4 mt-4 flex flex-col md:flex-row items-center justify-between gap-4">
+                    <div class="text-sm">
+                        <span class="block text-[10px] font-black text-slate-400 uppercase mb-1 tracking-wider">Destinazione Salvataggio</span>
+                        <div x-show="!dirHandle" class="text-amber-600 font-bold">Download standard</div>
+                        <div x-show="dirHandle" class="text-emerald-600 font-bold">Cartella automatica attiva</div>
+                    </div>
+                    <button @click="selectSaveFolder()" class="w-full md:w-auto bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-xs py-2 px-4 rounded-lg transition uppercase">Imposta Cartella</button>
+                </div>
+            </div>
+
+            <div x-show="!wizard.active && !selectedDate" x-transition>
+                <div x-show="user.period" class="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm mt-6">
+                    <div class="grid grid-cols-7 gap-2 mb-2">
+                        <template x-for="dayName in ['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom']"><div class="text-center text-[10px] font-black text-slate-400 uppercase" x-text="dayName"></div></template>
+                    </div>
+                    <div class="grid grid-cols-7 gap-2">
+                        <template x-for="(d, idx) in calendarDays" :key="idx">
+                            <div>
+                                <template x-if="d.empty"><div class="h-16 md:h-20 bg-slate-50/50 rounded-xl"></div></template>
+                                <template x-if="!d.empty">
+                                    <button @click="clickDay(d.date)" class="w-full h-16 md:h-20 rounded-xl flex flex-col items-center justify-center font-black transition relative hover:scale-105" :class="d.hasEvents ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/30' : 'bg-white text-slate-700 border border-slate-200 hover:bg-indigo-50 hover:text-indigo-600'">
+                                        <span x-text="d.day" class="text-lg leading-none mt-1"></span>
+                                        <span x-show="d.hasEvents" class="text-[10px] md:text-xs font-bold text-indigo-200 mt-1" x-text="formatCurrency(d.total)"></span>
+                                        <div x-show="d.hasEvents" class="absolute top-1.5 right-1.5 w-2 h-2 bg-emerald-400 rounded-full border-2 border-indigo-600"></div>
+                                    </button>
+                                </template>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+
+            <div x-show="selectedDate && !wizard.active" x-transition class="mt-6">
+                <div class="flex items-center justify-between mb-6">
+                    <button @click="selectedDate = null; editingId = null;" class="text-xs font-bold text-slate-500 uppercase bg-white border border-slate-200 px-4 py-2 rounded-lg shadow-sm transition">&larr; Indietro</button>
+                    <button @click="clearSelectedDay()" class="text-xs font-bold text-red-500 hover:text-white uppercase bg-red-50 hover:bg-red-500 border border-red-200 px-4 py-2 rounded-lg shadow-sm transition flex items-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                        Svuota giornata
+                    </button>
+                </div>
+                <div class="bg-indigo-50 border-2 border-indigo-100 rounded-2xl p-6 md:p-8">
+                    <h2 class="text-xl font-black text-indigo-900 mb-6 uppercase">Spese del <span x-text="formatDateStr(selectedDate)"></span></h2>
+                    <div class="space-y-4 mb-6">
+                        <template x-for="expense in dayExpenses" :key="expense.id">
+                            <div class="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                                <div x-show="editingId !== expense.id" @click="editingId = expense.id" class="p-4 flex flex-col md:flex-row justify-between items-center gap-4 cursor-pointer hover:bg-slate-50 transition">
+                                    <div class="flex items-center gap-4"><h4 class="text-lg font-black text-slate-800 uppercase" x-text="expense.category"></h4><p class="text-sm text-slate-500 font-medium truncate max-w-[200px]" x-text="getDescDisplay(expense)"></p></div>
+                                    <div class="text-right"><span class="block text-[10px] font-black text-slate-400 uppercase">Totale</span><span class="text-2xl font-black text-indigo-600" x-text="formatCurrency(getRowTotal(expense))"></span></div>
+                                </div>
+                                <div x-show="editingId === expense.id" class="p-5 bg-indigo-50/10 border-t border-indigo-100" style="display: none;">
+                                    <button @click="removeRow(expense)" class="absolute top-4 right-4 bg-white border border-slate-200 hover:bg-red-500 text-slate-400 hover:text-white w-8 h-8 rounded-full font-black flex items-center justify-center transition z-10 shadow-sm">&times;</button>
+                                    <div class="grid grid-cols-1 md:grid-cols-12 gap-6">
+                                        <div class="md:col-span-5 space-y-4">
+                                            <div class="w-full p-3 bg-slate-100 text-slate-500 border rounded-xl font-bold uppercase" x-text="expense.category + ' - ' + formatDateStr(expense.date)"></div>
+                                            <div x-show="expense.category === 'Pasti'" class="bg-white p-4 rounded-xl border">
+                                                <div class="flex gap-3"><template x-for="meal in ['Colazione', 'Pranzo', 'Cena']"><label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" :value="meal" x-model="expense.mealTypes" @change="saveToLocal()"><span class="text-sm font-bold" x-text="meal"></span></label></template></div>
+                                            </div>
+                                            <input type="text" x-model="expense.desc" @input="saveToLocal()" class="w-full p-3 border rounded-xl" :placeholder="expense.category === 'Trasferta' ? 'Tragitto' : 'Note'">
+                                            <div x-show="expense.category === 'Trasferta'" class="mt-2"><label class="block text-[10px] font-black text-blue-500 uppercase">Chilometri (<span x-text="formatCurrency(kmRate)"></span>/km)</label><input type="number" x-model.number="expense.km" @input="saveToLocal()" class="w-full p-3 border rounded-xl font-black text-blue-900 mt-1"></div>
+                                        </div>
+                                        <div class="md:col-span-7 bg-white p-4 rounded-xl shadow-sm">
+                                            <label class="block text-[10px] font-black text-slate-400 uppercase mb-3" x-text="expense.category === 'Trasferta' ? 'PEDAGGI' : 'RICEVUTE'"></label>
+                                            <div class="space-y-3 mb-4">
+                                                <template x-for="(att, aIndex) in expense.attachments" :key="aIndex">
+                                                    <div class="flex items-start gap-3 bg-slate-50 p-3 rounded-xl border relative pr-8">
+                                                        <template x-if="att.image"><img :src="att.image" class="w-14 h-14 object-cover rounded cursor-zoom-in" @click="activePreview = { exp: expense, aIndex: aIndex }"></template>
+                                                        <div class="flex-1 space-y-2"><template x-for="(amt, amtIndex) in att.amounts" :key="amtIndex"><input type="number" step="0.01" x-model.number="att.amounts[amtIndex]" @input="saveToLocal()" class="w-full p-2 border rounded-lg text-right font-bold text-slate-800" placeholder="0.00"></template></div>
+                                                        <button @click="removeAttachment(expense, aIndex)" class="absolute right-2 top-2 text-slate-300 hover:text-red-500 font-black">&times;</button>
+                                                    </div>
+                                                </template>
+                                            </div>
+                                            <div class="flex gap-3 pt-2 border-t">
+                                                <label class="cursor-pointer flex-1 bg-indigo-50 p-3 rounded-xl font-black text-[10px] text-indigo-600 text-center uppercase border border-indigo-200 hover:bg-indigo-100 transition">
+                                                    <span x-text="expense.category === 'Trasferta' ? 'Allega Pedaggio' : 'Allega Ricevuta'"></span>
+                                                    <input type="file" accept="image/*,application/pdf" class="hidden" @change="processFileForCrop($event, 'edit', expense)">
+                                                </label>
+                                                <button @click="addMissingReceipt(expense)" class="flex-1 bg-amber-50 p-3 rounded-xl font-black text-[10px] text-amber-600 text-center uppercase border border-amber-200 hover:bg-amber-100 transition">
+                                                    <span x-text="expense.category === 'Trasferta' ? 'Pedaggio Assente' : 'Ricevuta Assente'"></span>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="mt-4 flex justify-end"><button @click="editingId = null" class="bg-indigo-600 text-white font-black text-xs py-3 px-8 rounded-xl uppercase">Chiudi</button></div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                    <button @click="startWizard(selectedDate)" class="w-full bg-slate-800 text-white font-black py-4 rounded-xl shadow transition hover:bg-slate-700">+ AGGIUNGI ALTRA SPESA</button>
+                </div>
+            </div>
+
+            <div x-show="wizard.active" x-transition class="bg-indigo-50 border-2 border-indigo-100 rounded-2xl p-6 md:p-8 relative mt-6 shadow-inner">
+                <button @click="wizard.active = false" class="absolute top-4 right-4 text-indigo-300 hover:text-indigo-600 font-black text-2xl transition">&times;</button>
+                
+                <div x-show="wizard.step === 1" x-transition.opacity>
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-xl font-black text-indigo-900 uppercase">Aggiungi Spesa</h2>
+                        <span class="bg-white text-indigo-600 font-bold px-4 py-2 rounded-lg shadow-sm border border-indigo-100" x-text="formatDateStr(wizard.date)"></span>
+                    </div>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+                        <template x-for="cat in ['Trasferta', 'Pasti', 'Parcheggio', 'Pedaggio', 'Pernottamento', 'Biglietti', 'Altro']">
+                            <button @click="selectWizardCategory(cat)" class="bg-white text-indigo-700 border-2 border-indigo-200 p-4 rounded-xl font-black uppercase text-sm hover:bg-indigo-600 hover:text-white transition-all transform hover:-translate-y-1 shadow-sm" x-text="cat"></button>
+                        </template>
+                    </div>
+                    <div class="text-center"><button @click="wizard.active = false" class="text-xs font-bold text-slate-400 uppercase underline tracking-widest hover:text-slate-600">Annulla</button></div>
+                </div>
+
+                <div x-show="wizard.step === 2" x-transition.opacity style="display: none;">
+                    <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8 bg-white p-4 rounded-xl border border-indigo-200 shadow-sm">
+                        <button @click="wizard.step = 1" class="text-xs font-bold text-indigo-600 hover:text-indigo-800 uppercase flex items-center gap-2 bg-indigo-50 hover:bg-indigo-100 px-4 py-2 rounded-lg transition"><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>Indietro</button>
+                        <div class="flex items-center gap-2">
+                            <div class="bg-indigo-50 text-indigo-800 font-black px-3 py-2 rounded-lg text-sm border border-indigo-100 flex items-center gap-1"><span x-text="formatDateStr(wizard.date)"></span></div>
+                            <div class="bg-indigo-600 text-white font-black px-3 py-2 rounded-lg text-sm uppercase shadow-md flex items-center gap-1"><span x-text="wizard.category"></span></div>
+                        </div>
+                    </div>
+
+                    <div x-show="wizard.category === 'Trasferta'" class="space-y-6 mb-8 bg-white p-6 rounded-xl border">
+                        <input type="text" x-model="wizard.desc" placeholder="Tragitto" class="w-full p-3 border rounded-lg text-lg outline-none focus:ring-2 focus:ring-indigo-200 transition">
+                        <div>
+                            <label class="block text-[10px] font-black text-blue-500 uppercase mb-2 tracking-wider">Chilometri Percorsi (<span x-text="formatCurrency(kmRate)"></span>/km)</label>
+                            <input type="number" x-model.number="wizard.km" placeholder="KM" class="w-full p-4 bg-blue-50 border-2 border-blue-200 rounded-xl font-black text-2xl text-blue-900 outline-none">
+                        </div>
+                    </div>
+
+                    <div x-show="wizard.category !== 'Trasferta'" class="space-y-6 mb-8 bg-white p-6 rounded-xl border">
+                        <div x-show="wizard.category === 'Pasti'" class="flex gap-3 mb-4"><template x-for="meal in ['Colazione', 'Pranzo', 'Cena']"><label class="flex items-center gap-2 cursor-pointer bg-slate-50 py-2 px-3 rounded-lg border hover:bg-slate-100 transition"><input type="checkbox" :value="meal" x-model="wizard.mealTypes"><span class="text-sm font-bold" x-text="meal"></span></label></template></div>
+                        <input type="text" x-model="wizard.desc" placeholder="Note / Dettagli" class="w-full p-3 border rounded-lg outline-none focus:ring-2 focus:ring-indigo-200">
+                        <input type="number" step="0.01" x-model.number="wizard.manualAmount" placeholder="Importo €" class="w-full p-4 bg-indigo-50 border-2 border-indigo-200 rounded-xl font-black text-2xl text-indigo-900 outline-none">
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <label class="cursor-pointer bg-indigo-600 p-5 rounded-2xl font-black text-white text-center flex flex-col items-center gap-2 shadow-lg hover:bg-indigo-500 transition active:scale-95">
+                            <span x-text="wizard.category === 'Trasferta' ? 'ALLEGA PEDAGGIO' : 'ALLEGA RICEVUTA'"></span>
+                            <input type="file" accept="image/*,application/pdf" class="hidden" @change="processFileForCrop($event, 'wizard')">
+                        </label>
+                        <button @click="commitWizardMissing()" class="bg-amber-500 p-5 rounded-2xl font-black text-white text-center flex flex-col items-center gap-2 shadow-lg hover:bg-amber-400 transition active:scale-95"><span x-text="wizard.category === 'Trasferta' ? 'PEDAGGIO ASSENTE' : 'RICEVUTA ASSENTE'"></span></button>
+                    </div>
+                </div>
+
+                <div x-show="wizard.step === 3" x-transition.opacity style="display: none;" class="text-center py-6">
+                    <div class="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-inner"><svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg></div>
+                    <h2 class="text-2xl font-black text-slate-800 mb-6">Salvato correttamente!</h2>
+                    <div class="flex flex-col gap-3 max-w-sm mx-auto">
+                        <button @click="startWizard(wizard.date)" class="bg-white border-2 border-indigo-200 text-indigo-700 font-black py-4 rounded-xl shadow-sm hover:bg-indigo-50 transition">+ AGGIUNGI ALTRO</button>
+                        <button @click="selectedDate = wizard.date; wizard.active = false;" class="bg-indigo-600 text-white font-black py-4 rounded-xl shadow-lg hover:bg-indigo-500 transition">VAI AL RIEPILOGO</button>
+                        <button @click="selectedDate = null; wizard.active = false;" class="text-xs font-bold text-slate-400 uppercase underline mt-4 tracking-widest hover:text-slate-600">Torna al Calendario</button>
+                    </div>
+                </div>
+            </div>
+
+            <div x-show="expenses.length > 0" class="bg-slate-900 rounded-2xl p-6 md:p-8 text-white mt-8 shadow-2xl">
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8 border-b border-slate-700 pb-8">
+                    <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700/50"><p class="text-[10px] text-blue-400 uppercase font-black mb-1">KM Percorsi</p><p class="text-2xl font-light"><span x-text="calculateTotalKMs()"></span> km</p></div>
+                    <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700/50"><p class="text-[10px] text-blue-400 uppercase font-black mb-1">Totale KM (€)</p><p class="text-2xl font-light" x-text="formatCurrency(calculateTotalMileage())"></p></div>
+                    <template x-for="cat in ['Pasti', 'Parcheggio', 'Pedaggio', 'Pernottamento', 'Biglietti', 'Altro']"><div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700/50"><p class="text-[10px] text-indigo-300 uppercase font-black mb-1" x-text="'Tot. ' + cat"></p><p class="text-2xl font-light" x-text="formatCurrency(calculateCategory(cat))"></p></div></template>
+                </div>
+                <div class="flex justify-end mb-8"><div class="text-right"><p class="text-xs text-indigo-400 uppercase font-black mb-2 tracking-widest">Totale Generale</p><p class="text-6xl font-black text-white" x-text="formatCurrency(calculateTotalExpenses() + calculateTotalMileage())"></p></div></div>
+                <button @click="generateAllFiles()" class="w-full bg-indigo-500 hover:bg-indigo-400 text-white font-black text-xl py-5 rounded-xl shadow-lg transition transform hover:-translate-y-1 active:scale-95 flex items-center justify-center gap-3">
+                    <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>
+                    ESPORTA PDF, JSON ED EXCEL
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function expenseApp() {
+            let currentPdfDoc = null;
+            let currentCropper = null;
+
+            return {
+                user: { name: '', period: '' }, kmRate: 0.41, expenses: [], activePreview: null, editingId: null, selectedDate: null, dirHandle: null,
+                wizard: { active: false, step: 1, date: '', category: '', desc: '', km: '', manualAmount: '', mealTypes: [] },
+                cropState: { active: false, src: '', context: '', expense: null, isPdf: false, pageNum: 1, totalPages: 1, loading: false },
+
+                init() {
+                    const saved = localStorage.getItem('expense_v52'); 
+                    if (saved) { 
+                        const data = JSON.parse(saved); 
+                        this.user = data.user || { name: '', period: '' }; 
+                        this.expenses = data.expenses || []; 
+                        this.kmRate = data.kmRate !== undefined ? data.kmRate : 0.41;
+                    } else { 
+                        this.expenses = []; this.kmRate = 0.41;
+                    } 
+                    this.editingId = null; this.selectedDate = null;
+                },
+
+                resetData() { if(confirm("Svuotare tutto?")) { localStorage.removeItem('expense_v52'); this.expenses = []; this.user = { name: '', period: '' }; this.selectedDate = null; this.editingId = null; this.wizard.active = false; this.kmRate = 0.41; } },
+                clearSelectedDay() { if(confirm("Cancellare le spese di questa giornata e ricominciare?")) { const targetDate = this.selectedDate; this.expenses = this.expenses.filter(e => e.date !== targetDate); this.saveToLocal(); this.startWizard(targetDate); } },
+
+                importData(event) {
+                    const file = event.target.files[0]; if (!file) return;
+                    const reader = new FileReader(); reader.onload = (e) => {
+                        try { const data = JSON.parse(e.target.result); if (data.user && data.expenses) { this.user = data.user; this.expenses = data.expenses; this.kmRate = data.kmRate || 0.41; this.saveAndSort(); alert("Dati importati!"); } } catch(err) { alert("File non valido."); }
+                    }; reader.readAsText(file); event.target.value = '';
+                },
+
+                async selectSaveFolder() { try { const base = await window.showDirectoryPicker(); this.dirHandle = await base.getDirectoryHandle(`Rimborso_${this.user.period}`, { create: true }); } catch (err) {} },
+
+                get calendarDays() {
+                    if (!this.user.period) return [];
+                    const [y, m] = this.user.period.split('-');
+                    const first = new Date(y, m-1, 1), last = new Date(y, m, 0), daysInM = last.getDate();
+                    let startDay = (first.getDay() + 6) % 7, days = [];
+                    for(let i=0; i<startDay; i++) days.push({ empty: true });
+                    for(let i=1; i<=daysInM; i++) {
+                        const dStr = `${y}-${m}-${String(i).padStart(2, '0')}`;
+                        const dayExps = this.expenses.filter(e => e.date === dStr);
+                        days.push({ empty: false, day: i, date: dStr, hasEvents: dayExps.length > 0, total: dayExps.reduce((sum, e) => sum + this.getRowTotal(e), 0) });
+                    }
+                    return days;
+                },
+
+                get dayExpenses() { return this.selectedDate ? this.expenses.filter(e => e.date === this.selectedDate) : []; },
+                clickDay(dateStr) { this.selectedDate = dateStr; if(this.expenses.some(e => e.date === dateStr)) { this.wizard.active = false; this.editingId = null; } else { this.startWizard(dateStr); } },
+                saveToLocal() { localStorage.setItem('expense_v52', JSON.stringify({ user: this.user, expenses: this.expenses, kmRate: this.kmRate })); },
+                saveAndSort() { this.expenses.sort((a, b) => new Date(a.date) - new Date(b.date)); this.saveToLocal(); },
+                formatDateStr(d) { return d ? d.split('-').reverse().join('/') : ''; },
+                getDescDisplay(e) { let r = e.desc || ''; if (e.category === 'Pasti' && e.mealTypes?.length > 0) r = e.mealTypes.join(', ') + (r ? ' - ' + r : ''); return r || 'Nessun dettaglio'; },
+
+                startWizard(dateStr) { this.wizard = { active: true, step: 1, date: dateStr, category: '', desc: '', km: '', manualAmount: '', mealTypes: [] }; },
+                selectWizardCategory(cat) { this.wizard.category = cat; this.wizard.step = 2; },
+
+                commitWizardMissing() {
+                    this.expenses.push({ id: Date.now() + Math.random(), date: this.wizard.date, category: this.wizard.category, desc: this.wizard.desc, km: this.wizard.km, mealTypes: [...this.wizard.mealTypes], attachments: [{ image: null, amounts: [this.wizard.manualAmount || ''], isMissing: true }] });
+                    this.saveAndSort(); this.wizard.step = 3;
+                },
+
+                async processFileForCrop(event, context, expense = null) {
+                    const file = event.target.files[0];
+                    if (!file) return;
+
+                    if (file.type === 'application/pdf') {
+                        this.cropState = { active: true, src: '', context: context, expense: expense, isPdf: true, pageNum: 1, totalPages: 1, loading: true };
+                        const fileReader = new FileReader();
+                        fileReader.onload = async (e) => {
+                            try {
+                                const typedarray = new Uint8Array(e.target.result);
+                                currentPdfDoc = await pdfjsLib.getDocument({data: typedarray}).promise;
+                                this.cropState.totalPages = currentPdfDoc.numPages;
+                                await this.renderPdfPage();
+                            } catch(err) { alert("Impossibile leggere il PDF."); this.cancelCrop(); }
+                        };
+                        fileReader.readAsArrayBuffer(file);
+                    } else if (file.type.startsWith('image/')) {
+                        const reader = new FileReader();
+                        reader.onload = (e) => { this.cropState = { active: true, src: e.target.result, context: context, expense: expense, isPdf: false, loading: false }; this.initCropper(); };
+                        reader.readAsDataURL(file);
+                    } else {
+                        alert("Formato non supportato.");
+                    }
+                    event.target.value = '';
+                },
+
+                async renderPdfPage() {
+                    this.cropState.loading = true;
+                    if(currentCropper) { currentCropper.destroy(); currentCropper = null; }
+                    try {
+                        const page = await currentPdfDoc.getPage(this.cropState.pageNum);
+                        const viewport = page.getViewport({ scale: 1.5 });
+                        const canvas = document.createElement('canvas'); const ctx = canvas.getContext('2d');
+                        canvas.height = viewport.height; canvas.width = viewport.width;
+                        await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+                        this.cropState.src = canvas.toDataURL('image/jpeg', 0.8);
+                        this.cropState.loading = false;
+                        this.initCropper();
+                    } catch(err) { this.cropState.loading = false; alert("Errore pagina PDF."); this.cancelCrop(); }
+                },
+
+                nextPdfPage() { if(this.cropState.pageNum < this.cropState.totalPages) { this.cropState.pageNum++; this.renderPdfPage(); } },
+                prevPdfPage() { if(this.cropState.pageNum > 1) { this.cropState.pageNum--; this.renderPdfPage(); } },
+
+                initCropper() {
+                    setTimeout(() => {
+                        const imgEl = document.getElementById('cropper-img');
+                        if (currentCropper) currentCropper.destroy();
+                        currentCropper = new Cropper(imgEl, { viewMode: 1, dragMode: 'move', autoCropArea: 0.95, restore: false, guides: true, highlight: false, cropBoxMovable: true, cropBoxResizable: true, toggleDragModeOnDblclick: false });
+                    }, 50);
+                },
+
+                cancelCrop() { if (currentCropper) { currentCropper.destroy(); currentCropper = null; } this.cropState.active = false; currentPdfDoc = null; },
+
+                async confirmCrop() {
+                    if (!currentCropper) return;
+                    const canvas = currentCropper.getCroppedCanvas({ maxWidth: 1200, maxHeight: 1200 });
+                    const compressedBase64 = canvas.toDataURL('image/jpeg', 0.5);
+                    currentCropper.destroy(); currentCropper = null;
+                    const ctx = this.cropState.context; const exp = this.cropState.expense;
+                    this.cropState.active = false; currentPdfDoc = null;
+
+                    if (ctx === 'wizard') {
+                        let newExp = { id: Date.now().toString() + Math.random().toString(36).substr(2, 5), date: this.wizard.date, category: this.wizard.category, desc: this.wizard.desc, km: this.wizard.km, mealTypes: [...this.wizard.mealTypes], attachments: [{ image: compressedBase64, amounts: [this.wizard.manualAmount || ''], isMissing: false }] };
+                        this.expenses.push(newExp); this.saveAndSort();
+                        this.activePreview = { exp: this.expenses.find(e => e.id === newExp.id), aIndex: 0 };
+                    } else if (ctx === 'edit') {
+                        if (!exp.attachments) exp.attachments = [];
+                        let missIdx = exp.attachments.findIndex(a => a.isMissing === true);
+                        if (missIdx !== -1) { exp.attachments[missIdx].image = compressedBase64; exp.attachments[missIdx].isMissing = false; this.activePreview = { exp: exp, aIndex: missIdx }; }
+                        else { exp.attachments.push({ image: compressedBase64, amounts: [''], isMissing: false }); this.activePreview = { exp: exp, aIndex: exp.attachments.length - 1 }; }
+                        this.saveToLocal();
+                    }
+                },
+
+                closeZoomModal() { this.activePreview = null; if (this.wizard.active && this.wizard.step === 2) this.wizard.step = 3; },
+                removeRow(exp) { if(confirm("Rimuovere?")) { this.expenses = this.expenses.filter(e => e.id !== exp.id); if(this.dayExpenses.length === 0) this.selectedDate = null; this.saveToLocal(); } },
+                removeAttachment(exp, idx) { exp.attachments.splice(idx, 1); this.saveToLocal(); },
+                addMissingReceipt(exp) { exp.attachments.push({ image: null, amounts: [''], isMissing: true }); this.saveToLocal(); },
+                addAmountToActive() { this.activePreview.exp.attachments[this.activePreview.aIndex].amounts.push(''); this.saveToLocal(); },
+                removeAmountFromActive(idx) { this.activePreview.exp.attachments[this.activePreview.aIndex].amounts.splice(idx, 1); this.saveToLocal(); },
+                getAttTotal(att) { return (att.amounts || []).reduce((s, v) => s + (Number(v) || 0), 0); },
+                getRowTotal(e) { return (e.attachments?.reduce((s, a) => s + this.getAttTotal(a), 0) || 0) + (e.category === 'Trasferta' ? (Number(e.km) || 0) * this.kmRate : 0); },
+
+                calculateTotalKMs() { return this.expenses.reduce((s, e) => s + (e.category === 'Trasferta' ? Number(e.km) || 0 : 0), 0); },
+                calculateTotalMileage() { return this.calculateTotalKMs() * this.kmRate; },
+                calculateCategory(cat) { 
+                    return this.expenses.reduce((s, e) => {
+                        let attTot = (e.attachments?.reduce((ss, a) => ss + this.getAttTotal(a), 0) || 0);
+                        if (e.category === cat) return s + attTot;
+                        if (cat === 'Pedaggio' && e.category === 'Trasferta') return s + attTot;
+                        return s;
+                    }, 0); 
+                },
+                calculateTotalExpenses() { return this.expenses.reduce((s, e) => s + (e.attachments?.reduce((ss, a) => ss + this.getAttTotal(a), 0) || 0), 0); },
+                formatCurrency(v) { return new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(v); },
+
+                // ESPORTAZIONE FILE CON CONTROLLO SOVRASCRITTURA
+                async generateAllFiles() {
+                    if (this.expenses.length === 0) { alert("Nessuna spesa inserita."); return; }
+
+                    const safeName = (this.user.name || 'SenzaNome').trim().replace(/\s+/g, '_');
+                    const periodStr = this.user.period || 'Mese';
+                    const baseFileName = `Rimborso_${safeName}_${periodStr}`;
+
+                    // --- 1. Controllo Preventivo Sovrascrittura (Se cartella è attiva) ---
+                    if (this.dirHandle) {
+                        let fileExists = false;
+                        try { await this.dirHandle.getFileHandle(baseFileName + ".pdf"); fileExists = true; } catch(e) {}
+                        if(!fileExists) { try { await this.dirHandle.getFileHandle(baseFileName + ".json"); fileExists = true; } catch(e) {} }
+                        if(!fileExists) { try { await this.dirHandle.getFileHandle(baseFileName + ".xlsx"); fileExists = true; } catch(e) {} }
+                        
+                        if(fileExists) {
+                            if(!confirm(`Attenzione! I file di ${this.user.name} per il periodo ${this.user.period} esistono già nella cartella di salvataggio.\n\nVuoi sovrascriverli e aggiornarli?`)) {
+                                return; // Esce senza salvare nulla
+                            }
+                        }
+                    }
+
+                    // --- 2. GENERAZIONE PDF ---
+                    const { jsPDF } = window.jspdf; const doc = new jsPDF();
+                    const total = this.calculateTotalExpenses() + this.calculateTotalMileage();
+                    doc.setFontSize(18); doc.text("NOTA RIMBORSO SPESE", 14, 20);
+                    doc.setFontSize(9); doc.setFont(undefined, 'bold');
+                    doc.text(`Dipendente: ${this.user.name || '---'}`, 14, 30);
+                    doc.text(`Tariffa Chilometrica: ${this.kmRate} €/km`, 14, 35);
+                    doc.setFont(undefined, 'normal');
+                    doc.text(`Periodo: ${this.user.period || '---'}`, 14, 40);
+                    doc.text(`Data Emissione: ${new Date().toLocaleDateString('it-IT')}`, 14, 45);
+
+                    doc.autoTable({
+                        startY: 55, head: [['Data', 'Categoria', 'Dettaglio', 'KM', 'Rimb. KM', 'Pasti', 'Pedaggi', 'Parcheggi', 'Biglietti', 'Altre Sp.', 'Totale (€)']],
+                        body: this.expenses.filter(e => this.getRowTotal(e) > 0).map(e => {
+                            let dateS = this.formatDateStr(e.date); let desc = this.getDescDisplay(e);
+                            let attTot = e.attachments ? e.attachments.reduce((s, a) => s + this.getAttTotal(a), 0) : 0;
+                            let km = '-', rimbKm = '-', pasti = '-', pedaggi = '-', parch = '-', biglietti = '-', altre = '-';
+                            if (e.category === 'Trasferta') {
+                                if (e.km > 0) { km = e.km.toString(); rimbKm = (e.km * this.kmRate).toFixed(2); }
+                                if (attTot > 0) pedaggi = attTot.toFixed(2);
+                            } else if (e.category === 'Pasti') pasti = attTot.toFixed(2);
+                            else if (e.category === 'Pedaggio') pedaggi = attTot.toFixed(2);
+                            else if (e.category === 'Parcheggio') parch = attTot.toFixed(2);
+                            else if (e.category === 'Biglietti') biglietti = attTot.toFixed(2);
+                            else altre = attTot.toFixed(2);
+                            return [dateS, e.category, desc, km, rimbKm, pasti, pedaggi, parch, biglietti, altre, this.getRowTotal(e).toFixed(2)];
+                        }),
+                        foot: [[{content: 'TOTALI', colSpan: 3, styles: {halign: 'right'}}, this.calculateTotalKMs(), this.calculateTotalMileage().toFixed(2), this.calculateCategory('Pasti').toFixed(2), this.calculateCategory('Pedaggio').toFixed(2), this.calculateCategory('Parcheggio').toFixed(2), this.calculateCategory('Biglietti').toFixed(2), (this.calculateCategory('Pernottamento') + this.calculateCategory('Altro')).toFixed(2), total.toFixed(2)]],
+                        theme: 'striped', headStyles: { fillColor: [79, 70, 229] }, styles: { fontSize: 7, cellPadding: 1.5 }
+                    });
+
+                    let signY = doc.lastAutoTable.finalY + 30; if (signY > 260) { doc.addPage(); signY = 30; }
+                    doc.text("Firma del dipendente", 14, signY); doc.line(14, signY + 2, 70, signY + 2);
+                    doc.text("Firma del responsabile", 130, signY); doc.line(130, signY + 2, 186, signY + 2);
+
+                    if(this.expenses.some(e => e.attachments?.some(a => a.image))) {
+                        doc.addPage(); let col = 0, row = 0;
+                        this.expenses.forEach(e => e.attachments?.forEach(a => {
+                            if(a.image) {
+                                if (col >= 3) { col = 0; row++; } if (row >= 3) { doc.addPage(); col = 0; row = 0; }
+                                let x = 14 + (col * 65), y = 20 + (row * 85); doc.setFontSize(6);
+                                doc.text(`${this.formatDateStr(e.date)} - ${e.category} (${this.getAttTotal(a).toFixed(2)}€)`, x, y - 2);
+                                try { let p = doc.getImageProperties(a.image), r = Math.min(60 / p.width, 80 / p.height); doc.addImage(a.image, 'JPEG', x, y, p.width * r, p.height * r); } catch(err) {}
+                                col++;
+                            }
+                        }));
+                    }
+
+                    // --- 3. GENERAZIONE EXCEL E JSON ---
+                    const rowsExcel = [['Data', 'Categoria', 'Dettaglio', 'KM', 'Rimb. KM', 'Pasti', 'Pedaggi', 'Parcheggi', 'Biglietti', 'Altre Sp.', 'Totale (€)']];
+                    this.expenses.filter(e => this.getRowTotal(e) > 0).forEach(e => {
+                        let attTot = e.attachments ? e.attachments.reduce((s, a) => s + this.getAttTotal(a), 0) : 0;
+                        let km = 0, rimbKm = 0, pasti = 0, pedaggi = 0, parch = 0, biglietti = 0, altre = 0;
+                        if (e.category === 'Trasferta') { km = e.km || 0; rimbKm = km * this.kmRate; pedaggi = attTot; }
+                        else if (e.category === 'Pasti') pasti = attTot;
+                        else if (e.category === 'Pedaggio') pedaggi = attTot;
+                        else if (e.category === 'Parcheggio') parch = attTot;
+                        else if (e.category === 'Biglietti') biglietti = attTot;
+                        else altre = attTot;
+                        rowsExcel.push([this.formatDateStr(e.date), e.category, this.getDescDisplay(e), km, rimbKm, pasti, pedaggi, parch, biglietti, altre, this.getRowTotal(e)]);
+                    });
+                    rowsExcel.push(['TOTALI', '', '', this.calculateTotalKMs(), this.calculateTotalMileage(), this.calculateCategory('Pasti'), this.calculateCategory('Pedaggio'), this.calculateCategory('Parcheggio'), this.calculateCategory('Biglietti'), (this.calculateCategory('Pernottamento') + this.calculateCategory('Altro')), total]);
+                    
+                    const ws = XLSX.utils.aoa_to_sheet(rowsExcel);
+                    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Rimborso");
+                    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+
+                    const pdfB = doc.output('blob');
+                    const jsonB = new Blob([JSON.stringify({ user: this.user, expenses: this.expenses, kmRate: this.kmRate }, null, 2)], {type: 'application/json'});
+                    const xlsB = new Blob([excelBuffer], {type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+                    
+                    // --- 4. SALVATAGGIO FINALE ---
+                    if (this.dirHandle) {
+                        try {
+                            const pF = await this.dirHandle.getFileHandle(baseFileName+".pdf", { create: true }); const pW = await pF.createWritable(); await pW.write(pdfB); await pW.close();
+                            const jF = await this.dirHandle.getFileHandle(baseFileName+".json", { create: true }); const jW = await jF.createWritable(); await jW.write(jsonB); await jW.close();
+                            const xF = await this.dirHandle.getFileHandle(baseFileName+".xlsx", { create: true }); const xW = await xF.createWritable(); await xW.write(xlsB); await xW.close();
+                            alert("Esportazione 3 file (PDF, JSON, EXCEL) completata nella cartella!");
+                        } catch(e) { alert("Errore durante la scrittura. Procedo col download standard."); this.fallbackDown(baseFileName, doc, jsonB, xlsB); }
+                    } else { 
+                        this.fallbackDown(baseFileName, doc, jsonB, xlsB); 
+                    }
+
+                    window.location.href = `mailto:sara.setaro@set-i.it?subject=Rimborso%20${encodeURIComponent(this.user.name)}&body=Invio nota rimborso.`;
+                },
+
+                fallbackDown(name, doc, jB, xB) {
+                    doc.save(name+".pdf");
+                    const lJ = document.createElement('a'); lJ.href = URL.createObjectURL(jB); lJ.download = name+".json"; lJ.click();
+                    const lX = document.createElement('a'); lX.href = URL.createObjectURL(xB); lX.download = name+".xlsx"; lX.click();
+                }
+            }
+        }
+    </script>
+</body>
+</html>
